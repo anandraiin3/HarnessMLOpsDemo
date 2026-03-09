@@ -1,0 +1,55 @@
+##############################################################################
+# Credit Card Approval — AWS ALB Ingress (EKS)
+# Requires: AWS Load Balancer Controller installed on the cluster
+#
+# Terminates HTTPS at the ALB; routes /api/* → Flask API, /* → Next.js app.
+# Set the certificate-arn annotation to your ACM certificate ARN.
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: credit-card-ingress
+  annotations:
+    # AWS Load Balancer Controller — internet-facing ALB
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+
+    # TLS — replace with your ACM certificate ARN
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "<YOUR_ACM_CERTIFICATE_ARN>"
+
+    # Health check settings (ALB → pod)
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+
+    # Routing: path-based
+    alb.ingress.kubernetes.io/group.name: credit-card
+spec:
+  rules:
+    - host: credit-card.sandbox.harness-demo.site
+      http:
+        paths:
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: credit-card-api
+                port:
+                  number: 5000
+          - path: /predict
+            pathType: Prefix
+            backend:
+              service:
+                name: credit-card-api
+                port:
+                  number: 5000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: credit-card-app
+                port:
+                  number: 3000

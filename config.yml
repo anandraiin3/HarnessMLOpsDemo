@@ -1,0 +1,12 @@
+data:
+  load_file_path: 'synthetic_credit_card_approval.csv'
+model:
+  model_output_file_path: 'outputs'
+  model_output_file: 'selected_model.joblib'
+  metrics_output_file: 'selected_model_metrics.joblib'
+images:
+  image_output_file_path: 'images'
+mlflow:
+  #experiment_name : 'Harness Example MLOps'
+  experiment_name : 'Credit Card Approval'
+  tracking_uri : 'https://mlflow.sandbox.harness-demo.site'

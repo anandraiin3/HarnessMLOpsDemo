@@ -1,0 +1,7 @@
+name: MLflow Example Project
+
+conda_env: harness/conda.yaml
+
+entry_points:
+  main:
+    command: "python harness/execute_mlflow_pipeline.py"

@@ -1,0 +1,16 @@
+FROM public.ecr.aws/lambda/python:3.10
+
+# Set the working directory to /app
+WORKDIR /app
+
+# Install dependencies for building packages, including those needed for LightGBM and other compiled extensions
+RUN yum update -y && \
+    yum install -y gcc gcc-c++ make cmake libgomp
+
+# Copy the current directory contents into the container at /app
+COPY . /app
+
+# Install the specified packages
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+RUN pip install lightgbm

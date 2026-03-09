@@ -1,0 +1,10 @@
+[project]
+name = "ml-ops"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mlflow>=3.10.0",
+    "mlops>=0.1.0",
+]

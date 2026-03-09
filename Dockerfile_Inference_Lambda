@@ -1,0 +1,19 @@
+# Use the AWS provided Python 3.10 base image for Lambda
+FROM public.ecr.aws/lambda/python:3.10
+
+# Set the working directory to the Lambda task root (recommended by AWS)
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# Install dependencies for building packages, including those needed for LightGBM and other compiled extensions
+RUN yum update -y && \
+    yum install -y gcc gcc-c++ make cmake libgomp
+
+# Copy everything to the container image
+COPY . .
+
+# Upgrade pip and install required Python packages from requirements.txt
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# Set the CMD to your handler, this can be overridden via the AWS console or CLI if necessary
+CMD ["lambda_function.lambda_handler"]

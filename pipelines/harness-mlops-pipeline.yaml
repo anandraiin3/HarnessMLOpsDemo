@@ -1,0 +1,429 @@
+##############################################################################
+# Harness MLOps Pipeline — Credit Card Approval
+#
+# Demonstrates end-to-end MLOps best practices:
+#   Train → Evaluate (quality gate) → Build images → Deploy staging
+#   → Integration tests → Approval gate → Deploy production (canary)
+#
+# Import into Harness:
+#   Project → Pipelines → Import From Git → select this file
+##############################################################################
+pipeline:
+  name: MLOps Credit Card Approval
+  identifier: MLOps_Credit_Card_Approval
+  orgIdentifier: default
+  projectIdentifier: default_project
+  description: >-
+    End-to-end MLOps pipeline: model training with MLFlow experiment tracking,
+    automated quality and fairness evaluation gate, Docker image build,
+    Kubernetes canary deploy with Dynatrace continuous verification, and
+    manual promotion to production.
+  tags:
+    domain: mlops
+    app: credit-card-approval
+
+  properties:
+    ci:
+      codebase:
+        repoName: harness-mlops-creditcard
+        build: <+input>
+
+  variables:
+    - name: imageTag
+      type: String
+      value: <+pipeline.sequenceId>
+      description: Docker image tag for this pipeline run
+    - name: mlflowTrackingUri
+      type: String
+      value: https://mlflow.sandbox.harness-demo.site
+      description: MLFlow tracking server URI
+    - name: modelName
+      type: String
+      value: credit-card-approval
+      description: Registered model name in MLFlow Model Registry
+    - name: apiImageName
+      type: String
+      value: credit-card-api
+      description: Flask prediction API image name
+    - name: appImageName
+      type: String
+      value: credit-card-app
+      description: Next.js frontend image name
+
+  stages:
+    ##########################################################################
+    # STAGE 1 — Train Model
+    # Runs the MLFlow training pipeline, logs metrics, registers model.
+    # Outputs MLFLOW_RUN_ID for downstream stages.
+    ##########################################################################
+    - stage:
+        name: Train Model
+        identifier: Train_Model
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: mlops
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Install Dependencies
+                  identifier: Install_Dependencies
+                  spec:
+                    connectorRef: account.Dockerhub
+                    image: python:3.12-slim
+                    shell: Sh
+                    command: |-
+                      pip install --quiet -r requirements.txt
+              - step:
+                  type: Run
+                  name: Train and Register Model
+                  identifier: Train_and_Register_Model
+                  spec:
+                    connectorRef: account.Dockerhub
+                    image: python:3.12-slim
+                    shell: Sh
+                    command: |-
+                      pip install --quiet -r requirements.txt
+                      python harness/execute_mlflow_pipeline.py \
+                        --n_estimators 100 \
+                        --model_name <+pipeline.variables.modelName>
+                      # Export run ID as output variable
+                      export MLFLOW_RUN_ID=$(cat outputs/run_id.txt)
+                      echo "MLFLOW_RUN_ID=$MLFLOW_RUN_ID"
+                    envVariables:
+                      MLFLOW_TRACKING_URI: <+pipeline.variables.mlflowTrackingUri>
+                    outputVariables:
+                      - name: MLFLOW_RUN_ID
+                        value: <+MLFLOW_RUN_ID>
+                        type: String
+
+    ##########################################################################
+    # STAGE 2 — Evaluate Model
+    # Asserts accuracy > 80%, precision/recall/F1 > 75%.
+    # Pipeline fails here if model quality is insufficient.
+    ##########################################################################
+    - stage:
+        name: Evaluate Model
+        identifier: Evaluate_Model
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: mlops
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Quality and Fairness Gate
+                  identifier: Quality_and_Fairness_Gate
+                  spec:
+                    connectorRef: account.Dockerhub
+                    image: python:3.12-slim
+                    shell: Sh
+                    command: |-
+                      pip install --quiet mlflow pyyaml
+                      python harness/evaluate_model.py \
+                        --run_id <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.MLFLOW_RUN_ID> \
+                        --tracking_uri <+pipeline.variables.mlflowTrackingUri>
+                    envVariables:
+                      MLFLOW_TRACKING_URI: <+pipeline.variables.mlflowTrackingUri>
+
+    ##########################################################################
+    # STAGE 3 — Build and Push Images
+    # Builds Flask API + Next.js frontend Docker images and pushes to registry.
+    ##########################################################################
+    - stage:
+        name: Build and Push Images
+        identifier: Build_and_Push_Images
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: mlops
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: BuildAndPushDockerRegistry
+                  name: Build Flask API
+                  identifier: Build_Flask_API
+                  spec:
+                    connectorRef: <+input>
+                    repo: <+input>/<+pipeline.variables.apiImageName>
+                    tags:
+                      - <+pipeline.variables.imageTag>
+                      - latest
+                    dockerfile: web_application/api/Dockerfile
+                    context: web_application/api
+                    caching: true
+              - step:
+                  type: BuildAndPushDockerRegistry
+                  name: Build Next.js Frontend
+                  identifier: Build_Nextjs_Frontend
+                  spec:
+                    connectorRef: <+input>
+                    repo: <+input>/<+pipeline.variables.appImageName>
+                    tags:
+                      - <+pipeline.variables.imageTag>
+                      - latest
+                    dockerfile: web_application/app/harness_bank_app/Dockerfile
+                    context: web_application/app/harness_bank_app
+                    buildArgs:
+                      NEXT_PUBLIC_API_URL: http://credit-card-api-staging:5000
+                    caching: true
+
+    ##########################################################################
+    # STAGE 4 — Deploy Staging
+    # Rolls out both API and frontend to the staging Kubernetes environment.
+    ##########################################################################
+    - stage:
+        name: Deploy Staging
+        identifier: Deploy_Staging
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: <+input>
+          environment:
+            environmentRef: staging
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: <+input>
+          execution:
+            steps:
+              - step:
+                  type: K8sRollingDeploy
+                  name: Rolling Deploy to Staging
+                  identifier: Rolling_Deploy_Staging
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: false
+                  timeout: 10m
+            rollbackSteps:
+              - step:
+                  type: K8sRollingRollback
+                  name: Rollback Staging
+                  identifier: Rollback_Staging
+                  spec:
+                    pruningEnabled: false
+                  timeout: 10m
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+        delegateSelectors: <+input>
+
+    ##########################################################################
+    # STAGE 5 — Integration Tests
+    # Smoke-tests the deployed staging API: /health + /predict with
+    # known inputs to verify the model returns expected predictions.
+    ##########################################################################
+    - stage:
+        name: Integration Tests
+        identifier: Integration_Tests
+        type: CI
+        spec:
+          cloneCodebase: false
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: mlops
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Health Check
+                  identifier: Health_Check
+                  spec:
+                    connectorRef: account.Dockerhub
+                    image: curlimages/curl:latest
+                    shell: Sh
+                    command: |-
+                      curl -f http://credit-card-api-staging:5000/health
+                      echo "Health check passed"
+              - step:
+                  type: Run
+                  name: Prediction Smoke Tests
+                  identifier: Prediction_Smoke_Tests
+                  spec:
+                    connectorRef: account.Dockerhub
+                    image: python:3.12-slim
+                    shell: Sh
+                    command: |-
+                      pip install --quiet requests
+
+                      python - <<'EOF'
+                      import requests, sys
+
+                      BASE = "http://credit-card-api-staging:5000"
+
+                      # High-income, owns car and house → expect Approved (1)
+                      r = requests.post(f"{BASE}/predict", json={
+                          "income": 150000, "children": 0, "ownCar": True, "ownHouse": True
+                      })
+                      assert r.status_code == 200, f"Unexpected status: {r.status_code}"
+                      result = r.json()
+                      assert result["prediction"] == 1, \
+                          f"Expected Approved for high-income applicant, got: {result}"
+                      print(f"[PASS] High-income applicant: {result['result_str']}")
+
+                      # Low-income, no assets → expect Rejected (0)
+                      r = requests.post(f"{BASE}/predict", json={
+                          "income": 30000, "children": 4, "ownCar": False, "ownHouse": False
+                      })
+                      assert r.status_code == 200, f"Unexpected status: {r.status_code}"
+                      result = r.json()
+                      assert result["prediction"] == 0, \
+                          f"Expected Rejected for low-income applicant, got: {result}"
+                      print(f"[PASS] Low-income applicant: {result['result_str']}")
+
+                      print("\nAll integration tests passed.")
+                      EOF
+
+    ##########################################################################
+    # STAGE 6 — Approval Gate
+    # Manual approval required before promoting to production.
+    ##########################################################################
+    - stage:
+        name: Approve Production Deployment
+        identifier: Approve_Production_Deployment
+        type: Approval
+        spec:
+          execution:
+            steps:
+              - step:
+                  type: HarnessApproval
+                  name: Approve for Production
+                  identifier: Approve_for_Production
+                  spec:
+                    approvalMessage: |-
+                      Staging tests have passed. Please review the following before approving:
+
+                      - MLFlow experiment: <+pipeline.variables.mlflowTrackingUri>
+                      - Image tag: <+pipeline.variables.imageTag>
+                      - Run ID: <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.MLFLOW_RUN_ID>
+
+                      Approve to deploy to production.
+                    includePipelineExecutionHistory: true
+                    approvers:
+                      minimumCount: 1
+                      disallowPipelineExecutor: false
+                      userGroups:
+                        - account._account_all_users
+                  timeout: 24h
+
+    ##########################################################################
+    # STAGE 7 — Deploy Production
+    # Canary deploy: 25% traffic → Dynatrace CV verification → 100% rollout.
+    ##########################################################################
+    - stage:
+        name: Deploy Production
+        identifier: Deploy_Production
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: <+input>
+          environment:
+            environmentRef: production
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: <+input>
+          execution:
+            steps:
+              - stepGroup:
+                  name: Canary Rollout
+                  identifier: Canary_Rollout
+                  steps:
+                    - step:
+                        type: K8sCanaryDeploy
+                        name: Deploy 25% Canary
+                        identifier: Deploy_25_Canary
+                        spec:
+                          skipDryRun: false
+                          instanceSelection:
+                            type: Percentage
+                            spec:
+                              percentage: 25
+                        timeout: 10m
+                    - step:
+                        type: Verify
+                        name: Verify with Dynatrace
+                        identifier: Verify_with_Dynatrace
+                        spec:
+                          isMultiServicesOrEnvs: false
+                          type: Canary
+                          monitoredService:
+                            type: Default
+                            spec: {}
+                          spec:
+                            sensitivity: MEDIUM
+                            duration: 10m
+                        timeout: 2h
+                        failureStrategies:
+                          - onFailure:
+                              errors:
+                                - Verification
+                              action:
+                                type: StageRollback
+                          - onFailure:
+                              errors:
+                                - Unknown
+                              action:
+                                type: StageRollback
+                    - step:
+                        type: K8sCanaryDelete
+                        name: Delete Canary Pods
+                        identifier: Delete_Canary_Pods
+                        spec: {}
+                        timeout: 10m
+              - stepGroup:
+                  name: Full Rollout
+                  identifier: Full_Rollout
+                  steps:
+                    - step:
+                        type: K8sRollingDeploy
+                        name: Rolling Deploy to Production
+                        identifier: Rolling_Deploy_Production
+                        spec:
+                          skipDryRun: false
+                          pruningEnabled: false
+                        timeout: 10m
+            rollbackSteps:
+              - step:
+                  type: K8sCanaryDelete
+                  name: Delete Canary on Rollback
+                  identifier: Delete_Canary_Rollback
+                  spec: {}
+                  timeout: 10m
+              - step:
+                  type: K8sRollingRollback
+                  name: Rollback Production
+                  identifier: Rollback_Production
+                  spec:
+                    pruningEnabled: false
+                  timeout: 10m
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+        delegateSelectors: <+input>

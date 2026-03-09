@@ -1,0 +1,23 @@
+##############################################################################
+# Namespaces for the Credit Card Approval MLOps app on EKS
+##############################################################################
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlops
+  labels:
+    environment: shared
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlops-staging
+  labels:
+    environment: staging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlops-production
+  labels:
+    environment: production

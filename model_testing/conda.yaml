@@ -1,0 +1,9 @@
+name: mlflow-example-project
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - scikit-learn
+  - mlflow
+  - pip
+

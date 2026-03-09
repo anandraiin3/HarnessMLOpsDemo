@@ -1,0 +1,82 @@
+##############################################################################
+# Credit Card Approval — Flask Prediction API
+# AWS EKS deployment
+##############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: credit-card-api
+  labels:
+    app: credit-card-api
+    component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: credit-card-api
+  template:
+    metadata:
+      labels:
+        app: credit-card-api
+        component: api
+      annotations:
+        # Dynatrace OneAgent injection
+        oneagent.dynatrace.com/inject: "true"
+        oneagent.dynatrace.com/tags: "app:credit-card-api,team:mlops"
+    spec:
+      containers:
+        - name: credit-card-api
+          image: <+artifacts.primary.image>
+          ports:
+            - containerPort: 5000
+              name: http
+          env:
+            - name: PORT
+              value: "5000"
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: mlflow-tracking-uri
+                  optional: true
+            - name: MODEL_NAME
+              value: "credit-card-approval"
+            - name: MODEL_SOURCE
+              value: "auto"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: credit-card-api
+  labels:
+    app: credit-card-api
+spec:
+  selector:
+    app: credit-card-api
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+  type: ClusterIP

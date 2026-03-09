@@ -1,0 +1,72 @@
+##############################################################################
+# Credit Card Approval — Next.js Frontend
+# AWS EKS deployment
+##############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: credit-card-app
+  labels:
+    app: credit-card-app
+    component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: credit-card-app
+  template:
+    metadata:
+      labels:
+        app: credit-card-app
+        component: frontend
+      annotations:
+        # Dynatrace OneAgent injection
+        oneagent.dynatrace.com/inject: "true"
+        oneagent.dynatrace.com/tags: "app:credit-card-app,team:mlops"
+    spec:
+      containers:
+        - name: credit-card-app
+          image: <+artifacts.primary.image>
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: "http://credit-card-api:5000"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: credit-card-app
+  labels:
+    app: credit-card-app
+spec:
+  selector:
+    app: credit-card-app
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+  type: ClusterIP
