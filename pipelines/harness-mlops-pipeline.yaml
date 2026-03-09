@@ -5,7 +5,7 @@
 #   Train → Evaluate (quality gate) → Build images → Deploy staging
 #   → Integration tests → Approval gate → Deploy production (canary)
 #
-# Import into Harness:
+# Import into Harness : 
 #   Project → Pipelines → Import From Git → select this file
 ##############################################################################
 pipeline:
