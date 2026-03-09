@@ -100,7 +100,7 @@ pipeline:
                       MLFLOW_TRACKING_URI: <+pipeline.variables.mlflowTrackingUri>
                     outputVariables:
                       - name: MLFLOW_RUN_ID
-                        value: <+MLFLOW_RUN_ID>
+                        value: MLFLOW_RUN_ID
                         type: String
 
     ##########################################################################
@@ -226,7 +226,8 @@ pipeline:
                 - AllErrors
               action:
                 type: StageRollback
-        delegateSelectors: <+input>
+        delegateSelectors:
+          - <+input>
 
     ##########################################################################
     # STAGE 5 — Integration Tests
@@ -426,4 +427,5 @@ pipeline:
                 - AllErrors
               action:
                 type: StageRollback
-        delegateSelectors: <+input>
+        delegateSelectors:
+          - <+input>
