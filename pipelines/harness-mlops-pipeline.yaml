@@ -12,7 +12,7 @@ pipeline:
   name: MLOps Credit Card Approval
   identifier: MLOps_Credit_Card_Approval
   orgIdentifier: default
-  projectIdentifier: default_project
+  projectIdentifier: HarnessMLOPS
   description: >-
     End-to-end MLOps pipeline: model training with MLFlow experiment tracking,
     automated quality and fairness evaluation gate, Docker image build,
