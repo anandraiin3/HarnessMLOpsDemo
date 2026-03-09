@@ -355,7 +355,7 @@ pipeline:
                   steps:
                     - step:
                         type: K8sCanaryDeploy
-                        name: Deploy 25% Canary
+                        name: Deploy Canary 25pct
                         identifier: Deploy_25_Canary
                         spec:
                           skipDryRun: false
