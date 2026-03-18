@@ -1,44 +1,18 @@
-##############################################################################
-# Harness MLOps Pipeline — Credit Card Approval (AWS Native)
-#
-# AWS Services:
-#   SageMaker Experiments  : experiment tracking (params, metrics, fairness)
-#   SageMaker Model Registry: model versioning and approval workflow
-#   S3                     : model artifact and metrics storage
-#   EKS                    : Kubernetes runtime for CI steps and deployments
-#
-# Pipeline flow:
-#   Train → Evaluate (quality + fairness) → Build images
-#   → Deploy staging → Integration tests → Approval gate
-#   → Approve in SageMaker Model Registry → Deploy production (canary)
-#
-# IAM: EKS pods need s3:PutObject/GetObject + sagemaker:* via IRSA,
-#      or set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY as Harness secrets.
-#
-# Import into Harness:
-#   Project → Pipelines → Import From Git → select this file
-##############################################################################
 pipeline:
   name: MLOps Credit Card Approval
   identifier: MLOps_Credit_Card_Approval
   orgIdentifier: default
   projectIdentifier: HarnessMLOPS
-  description: >-
-    End-to-end MLOps pipeline using AWS native services: SageMaker Experiments
-    for tracking, SageMaker Model Registry for versioning and approval,
-    S3 for artifact storage, EKS for serving. Includes automated quality and
-    fairness gates, canary deployment, and Dynatrace continuous verification.
+  description: "End-to-end MLOps pipeline using AWS native services: SageMaker Experiments for tracking, SageMaker Model Registry for versioning and approval, S3 for artifact storage, EKS for serving. Includes automated quality and fairness gates, canary deployment, and Dynatrace continuous verification."
   tags:
     domain: mlops
     app: credit-card-approval
     cloud: aws
-
   properties:
     ci:
       codebase:
         repoName: HarnessMLOpsDemo
         build: <+input>
-
   variables:
     - name: imageTag
       type: String
@@ -64,15 +38,7 @@ pipeline:
       type: String
       value: credit-card-app
       description: Next.js frontend image name
-
   stages:
-    ##########################################################################
-    # STAGE 1 — Train Model
-    # Trains RandomForest, logs to SageMaker Experiments, saves model and
-    # metrics to S3, registers model in SageMaker Model Registry
-    # (status: PendingManualApproval).
-    # Outputs: RUN_NAME, MODEL_PACKAGE_ARN, S3_METRICS_URI
-    ##########################################################################
     - stage:
         name: Train Model
         identifier: Train_Model
@@ -120,15 +86,6 @@ pipeline:
                       - name: S3_METRICS_URI
                         value: S3_METRICS_URI
                         type: String
-
-    ##########################################################################
-    # STAGE 2 — Evaluate Model
-    # Downloads metrics.json from S3, asserts:
-    #   accuracy > 80%, precision/recall/F1 > 75%, fairness gap < 20%
-    # Pipeline fails here if any threshold is violated.
-    # On pass: model stays PendingManualApproval in SageMaker Model Registry
-    # (it will be Approved after the Harness approval gate in Stage 6).
-    ##########################################################################
     - stage:
         name: Evaluate Model
         identifier: Evaluate_Model
@@ -158,11 +115,6 @@ pipeline:
                         --region <+pipeline.variables.awsRegion>
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
-
-    ##########################################################################
-    # STAGE 3 — Build and Push Images
-    # Builds Flask API and Next.js frontend Docker images.
-    ##########################################################################
     - stage:
         name: Build and Push Images
         identifier: Build_and_Push_Images
@@ -205,11 +157,6 @@ pipeline:
                     buildArgs:
                       NEXT_PUBLIC_API_URL: http://credit-card-api-staging:5000
                     caching: true
-
-    ##########################################################################
-    # STAGE 4 — Deploy Staging
-    # Rolls out API and frontend to the staging EKS namespace.
-    ##########################################################################
     - stage:
         name: Deploy Staging
         identifier: Deploy_Staging
@@ -218,11 +165,12 @@ pipeline:
           deploymentType: Kubernetes
           service:
             serviceRef: <+input>
+            serviceInputs: <+input>
           environment:
             environmentRef: staging
             deployToAll: false
             infrastructureDefinitions:
-              - identifier: <+input>
+              - identifier: staging
           execution:
             steps:
               - step:
@@ -249,11 +197,7 @@ pipeline:
                 type: StageRollback
         delegateSelectors:
           - <+input>
-
-    ##########################################################################
-    # STAGE 5 — Integration Tests
-    # Smoke-tests the staging API: /health + /predict with known inputs.
-    ##########################################################################
+        tags: {}
     - stage:
         name: Integration Tests
         identifier: Integration_Tests
@@ -317,14 +261,6 @@ pipeline:
 
                       print("\nAll integration tests passed.")
                       EOF
-
-    ##########################################################################
-    # STAGE 6 — Approval Gate
-    # Human review before production. Reviewer can inspect:
-    #   - SageMaker Experiments run metrics and fairness scores
-    #   - SageMaker Model Registry package (PendingManualApproval)
-    #   - Image tag deployed to staging
-    ##########################################################################
     - stage:
         name: Approve Production Deployment
         identifier: Approve_Production_Deployment
@@ -356,12 +292,6 @@ pipeline:
                       userGroups:
                         - account._account_all_users
                   timeout: 24h
-
-    ##########################################################################
-    # STAGE 7 — Approve in SageMaker Model Registry
-    # Sets ModelApprovalStatus to Approved. The Flask API queries the
-    # registry on startup and loads whichever model is Approved.
-    ##########################################################################
     - stage:
         name: Approve Model in Registry
         identifier: Approve_Model_in_Registry
@@ -391,13 +321,6 @@ pipeline:
                         --region <+pipeline.variables.awsRegion>
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
-
-    ##########################################################################
-    # STAGE 8 — Deploy Production
-    # Canary deploy: 25% traffic → Dynatrace CV verification → 100% rollout.
-    # Flask API pods restart and load the newly Approved model from S3
-    # via the SageMaker Model Registry lookup.
-    ##########################################################################
     - stage:
         name: Deploy Production
         identifier: Deploy_Production
@@ -406,11 +329,12 @@ pipeline:
           deploymentType: Kubernetes
           service:
             serviceRef: <+input>
+            serviceInputs: <+input>
           environment:
             environmentRef: production
             deployToAll: false
             infrastructureDefinitions:
-              - identifier: <+input>
+              - identifier: prodns
           execution:
             steps:
               - stepGroup:
