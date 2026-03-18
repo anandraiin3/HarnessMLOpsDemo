@@ -1,0 +1,10 @@
+# Flask API — installed inside the Docker container
+# See: deployment/api/Dockerfile
+
+flask>=3.0
+flask-cors>=5.0
+gunicorn>=22.0
+numpy>=1.26
+joblib>=1.4
+boto3>=1.35
+sagemaker>=2.230

@@ -49,21 +49,50 @@ def get_feature_importances(X, y):
     return pd.Series(forest.feature_importances_, index=X.columns).to_json()
 
 
-def train_random_forest(X, y, n_estimators, model_name):
+def get_fairness_metrics(y_pred, group_test):
+    """
+    Compute per-group approval rates and the fairness gap.
+
+    Args:
+        y_pred (array-like): Model predictions on the test set.
+        group_test (Series): Group labels aligned with y_pred.
+
+    Returns:
+        metrics (dict): Per-group approval rates and overall fairness_gap.
+    """
+    metrics = {}
+    approval_rates = []
+    for grp_val in sorted(group_test.unique()):
+        mask = group_test.values == grp_val
+        rate = float(pd.Series(y_pred)[mask].mean())
+        metrics[f"fairness_group_{grp_val}_approval_rate"] = rate
+        approval_rates.append(rate)
+
+    if len(approval_rates) >= 2:
+        metrics["fairness_gap"] = max(approval_rates) - min(approval_rates)
+    else:
+        metrics["fairness_gap"] = 0.0
+
+    return metrics
+
+
+def train_random_forest(X, y, group, n_estimators, model_name):
     """
     Train a RandomForestClassifier, log everything to MLFlow, register the model.
 
     Args:
         X (DataFrame): Features (Group column already dropped).
         y (Series):    Labels.
+        group (Series): Sensitive group attribute (for fairness metrics only,
+                        not used as a training feature).
         n_estimators (int): Number of trees.
         model_name (str): MLFlow registered model name.
 
     Returns:
         run_id (str): The MLFlow run ID.
     """
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+    X_train, X_test, y_train, y_test, group_train, group_test = train_test_split(
+        X, y, group, test_size=0.2, random_state=42
     )
 
     with mlflow.start_run() as run:
@@ -85,11 +114,20 @@ def train_random_forest(X, y, n_estimators, model_name):
             "feature_importances": feature_importances,
         })
 
-        # Log metrics
+        # Log quality metrics
         for metric, value in train_metrics.items():
             mlflow.log_metric(f"train_{metric}", value)
         for metric, value in test_metrics.items():
             mlflow.log_metric(f"test_{metric}", value)
+
+        # Log fairness metrics (approval-rate parity across demographic groups)
+        fairness_metrics = get_fairness_metrics(y_test_pred, group_test)
+        for metric, value in fairness_metrics.items():
+            mlflow.log_metric(metric, value)
+
+        print(f"==> Fairness group approval rates: "
+              f"{ {k: f'{v:.4f}' for k, v in fairness_metrics.items() if 'group' in k} }")
+        print(f"==> Fairness gap: {fairness_metrics['fairness_gap']:.4f}")
 
         # Log and register model
         mlflow.sklearn.log_model(model, "model")
@@ -114,7 +152,7 @@ def main():
                         help='MLFlow registered model name.')
     args = parser.parse_args()
 
-    config_file_path = "config.yml"
+    config_file_path = "configs/config.yml"
     with open(config_file_path, "r") as f:
         config = yaml.safe_load(f)
 
@@ -130,11 +168,16 @@ def main():
 
     data = pd.read_csv(config['data']['load_file_path'])
 
+    # Extract group labels before dropping — used for fairness evaluation only
+    group = data["Group"] if "Group" in data.columns else pd.Series(
+        ["unknown"] * len(data), name="Group"
+    )
+
     # Drop target and sensitive Group attribute (fairness-unaware model)
     X = data.drop(columns=["Target", "Group"], errors='ignore')
     y = data["Target"]
 
-    run_id = train_random_forest(X, y, args.n_estimators, args.model_name)
+    run_id = train_random_forest(X, y, group, args.n_estimators, args.model_name)
 
     # Write run ID to file for downstream pipeline steps
     os.makedirs("outputs", exist_ok=True)

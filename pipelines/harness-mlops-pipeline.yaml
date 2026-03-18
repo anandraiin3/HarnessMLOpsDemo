@@ -1,11 +1,21 @@
 ##############################################################################
-# Harness MLOps Pipeline — Credit Card Approval
+# Harness MLOps Pipeline — Credit Card Approval (AWS Native)
 #
-# Demonstrates end-to-end MLOps best practices:
-#   Train → Evaluate (quality gate) → Build images → Deploy staging
-#   → Integration tests → Approval gate → Deploy production (canary)
+# AWS Services:
+#   SageMaker Experiments  : experiment tracking (params, metrics, fairness)
+#   SageMaker Model Registry: model versioning and approval workflow
+#   S3                     : model artifact and metrics storage
+#   EKS                    : Kubernetes runtime for CI steps and deployments
 #
-# Import into Harness : 
+# Pipeline flow:
+#   Train → Evaluate (quality + fairness) → Build images
+#   → Deploy staging → Integration tests → Approval gate
+#   → Approve in SageMaker Model Registry → Deploy production (canary)
+#
+# IAM: EKS pods need s3:PutObject/GetObject + sagemaker:* via IRSA,
+#      or set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY as Harness secrets.
+#
+# Import into Harness:
 #   Project → Pipelines → Import From Git → select this file
 ##############################################################################
 pipeline:
@@ -14,18 +24,19 @@ pipeline:
   orgIdentifier: default
   projectIdentifier: HarnessMLOPS
   description: >-
-    End-to-end MLOps pipeline: model training with MLFlow experiment tracking,
-    automated quality and fairness evaluation gate, Docker image build,
-    Kubernetes canary deploy with Dynatrace continuous verification, and
-    manual promotion to production.
+    End-to-end MLOps pipeline using AWS native services: SageMaker Experiments
+    for tracking, SageMaker Model Registry for versioning and approval,
+    S3 for artifact storage, EKS for serving. Includes automated quality and
+    fairness gates, canary deployment, and Dynatrace continuous verification.
   tags:
     domain: mlops
     app: credit-card-approval
+    cloud: aws
 
   properties:
     ci:
       codebase:
-        repoName: harness-mlops-creditcard
+        repoName: HarnessMLOpsDemo
         build: <+input>
 
   variables:
@@ -33,14 +44,18 @@ pipeline:
       type: String
       value: <+pipeline.sequenceId>
       description: Docker image tag for this pipeline run
-    - name: mlflowTrackingUri
+    - name: awsRegion
       type: String
-      value: https://mlflow.sandbox.harness-demo.site
-      description: MLFlow tracking server URI
-    - name: modelName
+      value: us-east-1
+      description: AWS region for SageMaker and S3
+    - name: s3BucketName
+      type: String
+      value: <+input>
+      description: S3 bucket for model artifacts and metrics
+    - name: modelPackageGroup
       type: String
       value: credit-card-approval
-      description: Registered model name in MLFlow Model Registry
+      description: SageMaker Model Registry package group name
     - name: apiImageName
       type: String
       value: credit-card-api
@@ -53,8 +68,10 @@ pipeline:
   stages:
     ##########################################################################
     # STAGE 1 — Train Model
-    # Runs the MLFlow training pipeline, logs metrics, registers model.
-    # Outputs MLFLOW_RUN_ID for downstream stages.
+    # Trains RandomForest, logs to SageMaker Experiments, saves model and
+    # metrics to S3, registers model in SageMaker Model Registry
+    # (status: PendingManualApproval).
+    # Outputs: RUN_NAME, MODEL_PACKAGE_ARN, S3_METRICS_URI
     ##########################################################################
     - stage:
         name: Train Model
@@ -72,16 +89,6 @@ pipeline:
             steps:
               - step:
                   type: Run
-                  name: Install Dependencies
-                  identifier: Install_Dependencies
-                  spec:
-                    connectorRef: account.Dockerhub
-                    image: python:3.12-slim
-                    shell: Sh
-                    command: |-
-                      pip install --quiet -r requirements.txt
-              - step:
-                  type: Run
                   name: Train and Register Model
                   identifier: Train_and_Register_Model
                   spec:
@@ -89,24 +96,38 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet -r requirements.txt
-                      python harness/execute_mlflow_pipeline.py \
+                      pip install --quiet -r requirements.txt sagemaker boto3
+                      python scripts/train_model.py \
                         --n_estimators 100 \
-                        --model_name <+pipeline.variables.modelName>
-                      # Export run ID as output variable
-                      export MLFLOW_RUN_ID=$(cat outputs/run_id.txt)
-                      echo "MLFLOW_RUN_ID=$MLFLOW_RUN_ID"
+                        --model_name <+pipeline.variables.modelPackageGroup>
+                      export RUN_NAME=$(cat outputs/run_name.txt)
+                      export MODEL_PACKAGE_ARN=$(cat outputs/model_package_arn.txt)
+                      export S3_METRICS_URI=$(cat outputs/s3_metrics_uri.txt)
+                      echo "RUN_NAME=$RUN_NAME"
+                      echo "MODEL_PACKAGE_ARN=$MODEL_PACKAGE_ARN"
+                      echo "S3_METRICS_URI=$S3_METRICS_URI"
                     envVariables:
-                      MLFLOW_TRACKING_URI: <+pipeline.variables.mlflowTrackingUri>
+                      AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                      S3_BUCKET: <+pipeline.variables.s3BucketName>
+                      SAGEMAKER_MODEL_PACKAGE_GROUP: <+pipeline.variables.modelPackageGroup>
                     outputVariables:
-                      - name: MLFLOW_RUN_ID
-                        value: MLFLOW_RUN_ID
+                      - name: RUN_NAME
+                        value: RUN_NAME
+                        type: String
+                      - name: MODEL_PACKAGE_ARN
+                        value: MODEL_PACKAGE_ARN
+                        type: String
+                      - name: S3_METRICS_URI
+                        value: S3_METRICS_URI
                         type: String
 
     ##########################################################################
     # STAGE 2 — Evaluate Model
-    # Asserts accuracy > 80%, precision/recall/F1 > 75%.
-    # Pipeline fails here if model quality is insufficient.
+    # Downloads metrics.json from S3, asserts:
+    #   accuracy > 80%, precision/recall/F1 > 75%, fairness gap < 20%
+    # Pipeline fails here if any threshold is violated.
+    # On pass: model stays PendingManualApproval in SageMaker Model Registry
+    # (it will be Approved after the Harness approval gate in Stage 6).
     ##########################################################################
     - stage:
         name: Evaluate Model
@@ -131,16 +152,16 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet mlflow pyyaml
-                      python harness/evaluate_model.py \
-                        --run_id <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.MLFLOW_RUN_ID> \
-                        --tracking_uri <+pipeline.variables.mlflowTrackingUri>
+                      pip install --quiet boto3
+                      python scripts/evaluate_model.py \
+                        --s3_metrics_uri <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.S3_METRICS_URI> \
+                        --region <+pipeline.variables.awsRegion>
                     envVariables:
-                      MLFLOW_TRACKING_URI: <+pipeline.variables.mlflowTrackingUri>
+                      AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
 
     ##########################################################################
     # STAGE 3 — Build and Push Images
-    # Builds Flask API + Next.js frontend Docker images and pushes to registry.
+    # Builds Flask API and Next.js frontend Docker images.
     ##########################################################################
     - stage:
         name: Build and Push Images
@@ -166,8 +187,8 @@ pipeline:
                     tags:
                       - <+pipeline.variables.imageTag>
                       - latest
-                    dockerfile: web_application/api/Dockerfile
-                    context: web_application/api
+                    dockerfile: deployment/api/Dockerfile
+                    context: deployment/api
                     caching: true
               - step:
                   type: BuildAndPushDockerRegistry
@@ -179,15 +200,15 @@ pipeline:
                     tags:
                       - <+pipeline.variables.imageTag>
                       - latest
-                    dockerfile: web_application/app/harness_bank_app/Dockerfile
-                    context: web_application/app/harness_bank_app
+                    dockerfile: deployment/app/harness_bank_app/Dockerfile
+                    context: deployment/app/harness_bank_app
                     buildArgs:
                       NEXT_PUBLIC_API_URL: http://credit-card-api-staging:5000
                     caching: true
 
     ##########################################################################
     # STAGE 4 — Deploy Staging
-    # Rolls out both API and frontend to the staging Kubernetes environment.
+    # Rolls out API and frontend to the staging EKS namespace.
     ##########################################################################
     - stage:
         name: Deploy Staging
@@ -231,8 +252,7 @@ pipeline:
 
     ##########################################################################
     # STAGE 5 — Integration Tests
-    # Smoke-tests the deployed staging API: /health + /predict with
-    # known inputs to verify the model returns expected predictions.
+    # Smoke-tests the staging API: /health + /predict with known inputs.
     ##########################################################################
     - stage:
         name: Integration Tests
@@ -300,7 +320,10 @@ pipeline:
 
     ##########################################################################
     # STAGE 6 — Approval Gate
-    # Manual approval required before promoting to production.
+    # Human review before production. Reviewer can inspect:
+    #   - SageMaker Experiments run metrics and fairness scores
+    #   - SageMaker Model Registry package (PendingManualApproval)
+    #   - Image tag deployed to staging
     ##########################################################################
     - stage:
         name: Approve Production Deployment
@@ -315,13 +338,17 @@ pipeline:
                   identifier: Approve_for_Production
                   spec:
                     approvalMessage: |-
-                      Staging tests have passed. Please review the following before approving:
+                      Staging tests have passed. Review before approving production.
 
-                      - MLFlow experiment: <+pipeline.variables.mlflowTrackingUri>
-                      - Image tag: <+pipeline.variables.imageTag>
-                      - Run ID: <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.MLFLOW_RUN_ID>
+                      SageMaker Experiments run: <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.RUN_NAME>
+                      SageMaker Model Registry ARN: <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.MODEL_PACKAGE_ARN>
+                      S3 metrics: <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.S3_METRICS_URI>
+                      Image tag: <+pipeline.variables.imageTag>
 
-                      Approve to deploy to production.
+                      Approving will:
+                        1. Set model to Approved in SageMaker Model Registry
+                        2. Trigger canary rollout to production EKS
+                        3. Flask API pods will load the newly approved model on startup
                     includePipelineExecutionHistory: true
                     approvers:
                       minimumCount: 1
@@ -331,8 +358,45 @@ pipeline:
                   timeout: 24h
 
     ##########################################################################
-    # STAGE 7 — Deploy Production
+    # STAGE 7 — Approve in SageMaker Model Registry
+    # Sets ModelApprovalStatus to Approved. The Flask API queries the
+    # registry on startup and loads whichever model is Approved.
+    ##########################################################################
+    - stage:
+        name: Approve Model in Registry
+        identifier: Approve_Model_in_Registry
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: mlops
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Approve Model Package
+                  identifier: Approve_Model_Package
+                  spec:
+                    connectorRef: account.Dockerhub
+                    image: python:3.12-slim
+                    shell: Sh
+                    command: |-
+                      pip install --quiet boto3
+                      python scripts/promote_model.py \
+                        --model_package_arn <+stages.Train_Model.spec.execution.steps.Train_and_Register_Model.output.outputVariables.MODEL_PACKAGE_ARN> \
+                        --region <+pipeline.variables.awsRegion>
+                    envVariables:
+                      AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+
+    ##########################################################################
+    # STAGE 8 — Deploy Production
     # Canary deploy: 25% traffic → Dynatrace CV verification → 100% rollout.
+    # Flask API pods restart and load the newly Approved model from S3
+    # via the SageMaker Model Registry lookup.
     ##########################################################################
     - stage:
         name: Deploy Production

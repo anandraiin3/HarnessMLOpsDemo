@@ -1,13 +1,14 @@
-joblib
-mlflow
-nbval
-numpy
-optuna
-pandas
-papermill
-pytest
-scikit-learn
-shap
-six
-xgboost
-notebook
+# Root requirements — used by the Harness CI pipeline (pip install -r requirements.txt)
+# Covers: scripts/train_model.py, scripts/evaluate_model.py, scripts/promote_model.py,
+#         scripts/execute_mlflow_pipeline.py
+#
+# For local development use uv:  uv sync --dev
+# For the Flask API see:         deployment/api/requirements.txt
+
+pandas>=2.2
+scikit-learn>=1.5
+joblib>=1.4
+mlflow>=2.16
+pyyaml>=6.0
+boto3>=1.35
+sagemaker>=2.230

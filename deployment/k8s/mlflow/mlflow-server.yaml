@@ -1,0 +1,125 @@
+##############################################################################
+# MLFlow Tracking Server — Deployment, Service, ALB Ingress
+# Namespace  : mlops
+# Internal DNS: http://mlflow-server.mlops:5000   (used by pipeline stages)
+# External   : https://mlflow.mlops.harness-demo.site  (UI access)
+#
+# Prerequisites:
+#   - AWS Load Balancer Controller installed on the EKS cluster
+#   - ACM certificate ARN set in the ingress annotation
+#   - S3 bucket name set in MLFLOW_S3_BUCKET
+#   - mlflow-postgres-secret exists (from postgres.yaml)
+##############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow-server
+  namespace: mlops
+  labels:
+    app: mlflow-server
+    component: mlops-tracking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow-server
+  template:
+    metadata:
+      labels:
+        app: mlflow-server
+        component: mlops-tracking
+    spec:
+      containers:
+        - name: mlflow-server
+          image: <+artifacts.primary.image>
+          ports:
+            - containerPort: 5000
+              name: http
+          env:
+            - name: MLFLOW_DB_HOST
+              value: "mlflow-postgres.mlops.svc.cluster.local"
+            - name: MLFLOW_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-postgres-secret
+                  key: POSTGRES_DB
+            - name: MLFLOW_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-postgres-secret
+                  key: POSTGRES_USER
+            - name: MLFLOW_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: MLFLOW_S3_BUCKET
+              value: "<YOUR_S3_BUCKET_NAME>"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow-server
+  namespace: mlops
+  labels:
+    app: mlflow-server
+spec:
+  selector:
+    app: mlflow-server
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mlflow-ingress
+  namespace: mlops
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "<YOUR_ACM_CERTIFICATE_ARN>"
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/group.name: mlflow
+spec:
+  rules:
+    - host: mlflow.mlops.harness-demo.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mlflow-server
+                port:
+                  number: 5000

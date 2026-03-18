@@ -8,19 +8,53 @@ app = Flask(__name__)
 CORS(app)
 
 # ── Model loading ──────────────────────────────────────────────────────────────
-# Priority: MLFlow registry → local file → S3
-# Override by setting MODEL_SOURCE = "mlflow" | "local" | "s3"
+# Priority: SageMaker Model Registry (latest Approved) → local file
+# Override by setting MODEL_SOURCE = "sagemaker" | "local"
 
 model = None
 
 
-def load_model_from_mlflow(tracking_uri, model_name, model_version):
-    import mlflow
-    mlflow.set_tracking_uri(tracking_uri)
-    stage_or_version = model_version or "Production"
-    model_uri = f"models:/{model_name}/{stage_or_version}"
-    print(f"[INFO] Loading model from MLFlow: {model_uri}")
-    return mlflow.sklearn.load_model(model_uri)
+def load_model_from_sagemaker_registry(model_package_group, region):
+    """
+    Fetch the latest Approved model package from SageMaker Model Registry,
+    then download the model artifact from its S3 URI.
+    """
+    import boto3, joblib
+    sm = boto3.client('sagemaker', region_name=region)
+
+    response = sm.list_model_packages(
+        ModelPackageGroupName=model_package_group,
+        ModelApprovalStatus='Approved',
+        SortBy='CreationTime',
+        SortOrder='Descending',
+        MaxResults=1,
+    )
+
+    packages = response.get('ModelPackageSummaryList', [])
+    if not packages:
+        raise RuntimeError(
+            f"No Approved model in SageMaker Model Registry group: {model_package_group}"
+        )
+
+    arn = packages[0]['ModelPackageArn']
+    info = sm.describe_model_package(ModelPackageName=arn)
+
+    # Prefer the CustomerMetadataProperties URI (direct joblib), fall back to container URI
+    s3_model_uri = (
+        info.get('CustomerMetadataProperties', {}).get('s3_model_uri')
+        or info['InferenceSpecification']['Containers'][0]['ModelDataUrl']
+    )
+    print(f"[INFO] Loading Approved model from: {s3_model_uri}")
+
+    without_prefix = s3_model_uri.replace("s3://", "")
+    bucket, key = without_prefix.split("/", 1)
+
+    s3 = boto3.client('s3', region_name=region)
+    with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as tmp:
+        s3.download_fileobj(bucket, key, tmp)
+        tmp_path = tmp.name
+
+    return joblib.load(tmp_path)
 
 
 def load_model_from_local(path):
@@ -29,35 +63,19 @@ def load_model_from_local(path):
     return joblib.load(path)
 
 
-def load_model_from_s3(bucket, key):
-    import boto3, joblib
-    print(f"[INFO] Loading model from S3: s3://{bucket}/{key}")
-    s3 = boto3.client("s3")
-    with tempfile.NamedTemporaryFile(suffix=".joblib") as tmp:
-        s3.download_fileobj(bucket, key, tmp)
-        tmp.seek(0)
-        return joblib.load(tmp)
-
-
 def load_model():
-    source        = os.environ.get("MODEL_SOURCE", "auto").lower()
-    tracking_uri  = os.environ.get("MLFLOW_TRACKING_URI", "")
-    model_name    = os.environ.get("MODEL_NAME", "credit-card-approval")
-    model_version = os.environ.get("MODEL_VERSION", "")
-    local_path    = os.environ.get("MODEL_LOCAL_PATH", "")
-    s3_bucket     = os.environ.get("S3_BUCKET", "")
-    s3_key        = os.environ.get("MODEL_PKL", "")
+    source              = os.environ.get("MODEL_SOURCE", "auto").lower()
+    model_package_group = os.environ.get("SAGEMAKER_MODEL_PACKAGE_GROUP", "credit-card-approval")
+    region              = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    local_path          = os.environ.get("MODEL_LOCAL_PATH", "")
 
-    if source == "mlflow" or (source == "auto" and tracking_uri and model_name):
-        return load_model_from_mlflow(tracking_uri, model_name, model_version)
+    if source == "sagemaker" or (source == "auto" and model_package_group):
+        return load_model_from_sagemaker_registry(model_package_group, region)
     if source == "local" or (source == "auto" and local_path):
         return load_model_from_local(local_path)
-    if source == "s3" or (source == "auto" and s3_bucket and s3_key):
-        return load_model_from_s3(s3_bucket, s3_key)
 
     raise RuntimeError(
-        "No model source configured. Set MLFLOW_TRACKING_URI, "
-        "MODEL_LOCAL_PATH, or S3_BUCKET + MODEL_PKL."
+        "No model source configured. Set SAGEMAKER_MODEL_PACKAGE_GROUP or MODEL_LOCAL_PATH."
     )
 
 

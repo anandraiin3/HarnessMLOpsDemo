@@ -1,7 +1,0 @@
-flask
-flask_cors
-numpy
-boto3
-joblib
-mlflow
-gunicorn

@@ -1,0 +1,35 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# uv
+# uv.lock is committed — ensures reproducible installs across machines
+
+# Generated artifacts (gitignored in subdirs too, but listed here for clarity)
+outputs/*.joblib
+outputs/*.json
+outputs/*.txt
+outputs/*.pkl
+images/*.jpg
+images/*.png
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+*.env
