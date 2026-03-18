@@ -11,8 +11,10 @@ pipeline:
   properties:
     ci:
       codebase:
+        connectorRef: account.AnandGitHub
         repoName: HarnessMLOpsDemo
         build: <+input>
+        sparseCheckout: []
   variables:
     - name: imageTag
       type: String
@@ -50,6 +52,8 @@ pipeline:
             spec:
               connectorRef: <+input>
               namespace: mlops
+              automountServiceAccountToken: true
+              nodeSelector: {}
               os: Linux
           execution:
             steps:
@@ -58,7 +62,7 @@ pipeline:
                   name: Train and Register Model
                   identifier: Train_and_Register_Model
                   spec:
-                    connectorRef: account.Dockerhub
+                    connectorRef: account.harnessImage
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
@@ -78,14 +82,15 @@ pipeline:
                       SAGEMAKER_MODEL_PACKAGE_GROUP: <+pipeline.variables.modelPackageGroup>
                     outputVariables:
                       - name: RUN_NAME
+                        type: String
                         value: RUN_NAME
-                        type: String
                       - name: MODEL_PACKAGE_ARN
+                        type: String
                         value: MODEL_PACKAGE_ARN
-                        type: String
                       - name: S3_METRICS_URI
-                        value: S3_METRICS_URI
                         type: String
+                        value: S3_METRICS_URI
+        description: ""
     - stage:
         name: Evaluate Model
         identifier: Evaluate_Model
@@ -105,7 +110,7 @@ pipeline:
                   name: Quality and Fairness Gate
                   identifier: Quality_and_Fairness_Gate
                   spec:
-                    connectorRef: account.Dockerhub
+                    connectorRef: account.harnessImage
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
@@ -122,11 +127,7 @@ pipeline:
         spec:
           cloneCodebase: true
           infrastructure:
-            type: KubernetesDirect
-            spec:
-              connectorRef: <+input>
-              namespace: mlops
-              os: Linux
+            useFromStage: Train_Model
           execution:
             steps:
               - step:
@@ -134,38 +135,35 @@ pipeline:
                   name: Build Flask API
                   identifier: Build_Flask_API
                   spec:
-                    connectorRef: <+input>
-                    repo: <+input>/<+pipeline.variables.apiImageName>
+                    connectorRef: account.harnessImage
+                    repo: anandraiin3/credit-card-app
                     tags:
                       - <+pipeline.variables.imageTag>
                       - latest
+                    caching: true
                     dockerfile: deployment/api/Dockerfile
                     context: deployment/api
-                    caching: true
               - step:
                   type: BuildAndPushDockerRegistry
-                  name: Build Next.js Frontend
+                  name: BuildFrontend
                   identifier: Build_Nextjs_Frontend
                   spec:
-                    connectorRef: <+input>
-                    repo: <+input>/<+pipeline.variables.appImageName>
+                    connectorRef: account.harnessImage
+                    repo: anandraiin3/credit-card-app
                     tags:
                       - <+pipeline.variables.imageTag>
                       - latest
+                    caching: true
                     dockerfile: deployment/app/harness_bank_app/Dockerfile
                     context: deployment/app/harness_bank_app
                     buildArgs:
                       NEXT_PUBLIC_API_URL: http://credit-card-api-staging:5000
-                    caching: true
     - stage:
         name: Deploy Staging
         identifier: Deploy_Staging
         type: Deployment
         spec:
           deploymentType: Kubernetes
-          service:
-            serviceRef: <+input>
-            serviceInputs: <+input>
           environment:
             environmentRef: staging
             deployToAll: false
@@ -189,6 +187,28 @@ pipeline:
                   spec:
                     pruningEnabled: false
                   timeout: 10m
+          services:
+            values:
+              - serviceRef: CreditCardApp
+                serviceInputs:
+                  serviceDefinition:
+                    type: Kubernetes
+                    spec:
+                      artifacts:
+                        primary:
+                          primaryArtifactRef: <+input>
+                          sources: <+input>
+              - serviceRef: CreditCardApi
+                serviceInputs:
+                  serviceDefinition:
+                    type: Kubernetes
+                    spec:
+                      artifacts:
+                        primary:
+                          primaryArtifactRef: <+input>
+                          sources: <+input>
+            metadata:
+              parallel: false
         failureStrategies:
           - onFailure:
               errors:
