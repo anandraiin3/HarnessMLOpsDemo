@@ -21,7 +21,12 @@ Usage:
     python scripts/register_model.py \
         --s3_model_uri s3://bucket/models/credit-card-approval/run-xxx/model.joblib \
         --model_package_group credit-card-approval \
+        --inference_image_uri 123456789.dkr.ecr.us-east-1.amazonaws.com/credit-card-api:latest \
         --region us-east-1
+
+All arguments are required — values are passed from Harness pipeline variables
+so that external system configuration is owned and visible in the pipeline,
+not buried as defaults inside the script.
 """
 
 import argparse
@@ -36,17 +41,16 @@ def main():
         description='Register model in SageMaker Model Registry.'
     )
     parser.add_argument('--s3_model_uri', required=True,
-                        help='S3 URI of the uploaded model artifact')
-    parser.add_argument('--model_package_group', type=str,
-                        default=os.environ.get('SAGEMAKER_MODEL_PACKAGE_GROUP',
-                                               'credit-card-approval'))
-    parser.add_argument('--api_image_uri', type=str,
-                        default=os.environ.get('API_IMAGE_URI',
-                                               'placeholder/credit-card-api:latest'))
-    parser.add_argument('--region', type=str, default=None)
+                        help='S3 URI of the uploaded model artifact (from Harness S3Upload step)')
+    parser.add_argument('--model_package_group', type=str, required=True,
+                        help='SageMaker Model Registry package group name (Harness pipeline variable)')
+    parser.add_argument('--inference_image_uri', type=str, required=True,
+                        help='Container image URI for inference (Harness pipeline variable)')
+    parser.add_argument('--region', type=str, required=True,
+                        help='AWS region (Harness pipeline variable)')
     args = parser.parse_args()
 
-    region = args.region or os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+    region = args.region
 
     with open("outputs/run_name.txt") as f:
         run_name = f.read().strip()
@@ -81,7 +85,7 @@ def main():
         InferenceSpecification={
             'Containers': [
                 {
-                    'Image':        args.api_image_uri,
+                    'Image':        args.inference_image_uri,
                     'ModelDataUrl': args.s3_model_uri,
                 }
             ],

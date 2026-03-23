@@ -2,18 +2,17 @@
 #
 # Harness Governance — ML Model Quality and Fairness Policy
 #
-# Evaluated by the "Governance Policy Check" stage in the Harness MLOps pipeline.
-# Any rule that fires populates the `deny` set, causing the pipeline to halt
-# and the model to remain in PendingManualApproval status.
+# This file is the source of truth for the policy. It is imported into Harness
+# as a managed Policy (Settings → Governance → Policies → New Policy) and
+# referenced by the "Model Governance" Policy Set.
+#
+# Enforcement happens via the native Harness Policy step in the pipeline —
+# the step passes the model metrics JSON as the input payload and Harness
+# evaluates it here. No external OPA tooling is needed.
+#
+# To update: edit this file, open a PR, and re-import into Harness after merge.
 #
 # Policy owners: ML Platform / Risk & Compliance teams
-# Versioned alongside the pipeline — changes require PR review.
-#
-# Usage (via check_governance.py):
-#   opa eval --format json \
-#            --input model_metrics.json \
-#            --data policies/model_governance.rego \
-#            "data.mlops.model_governance.deny"
 
 package mlops.model_governance
 

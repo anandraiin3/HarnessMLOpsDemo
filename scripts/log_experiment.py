@@ -15,6 +15,10 @@ Usage:
     python scripts/log_experiment.py \
         --experiment_name credit-card-approval \
         --region us-east-1
+
+All arguments are required — values are passed from Harness pipeline variables
+so that external system configuration is owned and visible in the pipeline,
+not buried as defaults inside the script.
 """
 
 import argparse
@@ -34,11 +38,13 @@ except ImportError:
 
 def main():
     parser = argparse.ArgumentParser(description='Log run to SageMaker Experiments.')
-    parser.add_argument('--experiment_name', type=str, default='credit-card-approval')
-    parser.add_argument('--region', type=str, default=None)
+    parser.add_argument('--experiment_name', type=str, required=True,
+                        help='SageMaker Experiments name (passed from Harness pipeline variable)')
+    parser.add_argument('--region', type=str, required=True,
+                        help='AWS region (passed from Harness pipeline variable)')
     args = parser.parse_args()
 
-    region = args.region or os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+    region = args.region
 
     # Read artifacts from shared workspace (written by train_model.py)
     with open("outputs/run_name.txt") as f:

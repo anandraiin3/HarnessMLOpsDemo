@@ -67,6 +67,18 @@ pipeline:
       type: String
       value: credit-card-app
       description: Next.js frontend image name
+    - name: sagemakerExperimentName
+      type: String
+      value: credit-card-approval
+      description: SageMaker Experiments name for tracking training runs
+    - name: inferenceImageUri
+      type: String
+      value: <+input>
+      description: ECR image URI used by SageMaker Model Registry InferenceSpecification
+    - name: governancePolicySet
+      type: String
+      value: <+input>
+      description: Harness Policy Set identifier containing model_governance.rego (Settings → Governance → Policy Sets)
   stages:
     ##########################################################################
     # STAGE 1 — Train Model
@@ -146,7 +158,7 @@ pipeline:
                     command: |-
                       pip install --quiet boto3 sagemaker
                       python scripts/log_experiment.py \
-                        --experiment_name <+pipeline.variables.modelPackageGroup> \
+                        --experiment_name <+pipeline.variables.sagemakerExperimentName> \
                         --region <+pipeline.variables.awsRegion>
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
@@ -208,13 +220,13 @@ pipeline:
                       python scripts/register_model.py \
                         --s3_model_uri $S3_MODEL_URI \
                         --model_package_group <+pipeline.variables.modelPackageGroup> \
+                        --inference_image_uri <+pipeline.variables.inferenceImageUri> \
                         --region <+pipeline.variables.awsRegion>
                       export MODEL_PACKAGE_ARN=$(cat outputs/model_package_arn.txt)
                       echo "MODEL_PACKAGE_ARN=$MODEL_PACKAGE_ARN"
                       echo "S3_METRICS_URI=$S3_METRICS_URI"
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
-                      SAGEMAKER_MODEL_PACKAGE_GROUP: <+pipeline.variables.modelPackageGroup>
                     outputVariables:
                       - name: MODEL_PACKAGE_ARN
                         type: String
@@ -226,15 +238,16 @@ pipeline:
     ##########################################################################
     # STAGE 2 — Governance Policy Check
     #
-    # Demonstrates Harness Governance: policy-as-code enforced automatically
-    # at every pipeline run, with a full audit trail in Harness.
+    # Demonstrates Harness native OPA governance. The Rego policy
+    # (policies/model_governance.rego) is imported into Harness as a managed
+    # Policy and referenced by a Policy Set. No external OPA tooling needed.
     #
-    # The OPA policy (policies/model_governance.rego) encodes the compliance
-    # and fairness rules defined by the Risk & Compliance team. If any rule
-    # fires, the pipeline halts and the model stays PendingManualApproval —
-    # it never reaches staging or production.
+    # Step 1: Fetch model metrics from S3 and expose as a JSON payload.
+    # Step 2: Harness Policy step passes the payload to the Harness OPA engine.
+    #         If any deny rule fires the pipeline halts and the model stays
+    #         PendingManualApproval — it never reaches staging or production.
     #
-    # Policy checks:
+    # Policy checks (defined in policies/model_governance.rego):
     #   - test_accuracy  >= 80%   (minimum performance for production)
     #   - test_precision >= 75%   (false approval rate control)
     #   - test_recall    >= 75%   (creditworthy applicant coverage)
@@ -246,7 +259,7 @@ pipeline:
         identifier: Governance_Policy_Check
         type: CI
         spec:
-          cloneCodebase: true
+          cloneCodebase: false
           infrastructure:
             type: KubernetesDirect
             spec:
@@ -255,10 +268,16 @@ pipeline:
               os: Linux
           execution:
             steps:
+
+              ##################################################################
+              # Step 1 — Fetch Model Metrics
+              # Downloads metrics.json from S3 and exports the content as a
+              # compact JSON string (METRICS_JSON) for the Policy step payload.
+              ##################################################################
               - step:
                   type: Run
-                  name: Enforce OPA Governance Policy
-                  identifier: Enforce_OPA_Governance_Policy
+                  name: Fetch Model Metrics
+                  identifier: Fetch_Model_Metrics
                   spec:
                     connectorRef: account.harnessImage
                     image: python:3.12-slim
@@ -266,21 +285,56 @@ pipeline:
                     command: |-
                       pip install --quiet boto3
 
-                      # Install OPA CLI
-                      curl -sSfL \
-                        https://openpolicyagent.org/downloads/v0.69.0/opa_linux_amd64_static \
-                        -o /usr/local/bin/opa
-                      chmod +x /usr/local/bin/opa
-                      opa version
+                      python - <<'EOF'
+                      import boto3, json, os
 
-                      # Evaluate model metrics against governance policy
-                      python scripts/check_governance.py \
-                        --s3_metrics_uri $S3_METRICS_URI \
-                        --policy_file policies/model_governance.rego \
-                        --region <+pipeline.variables.awsRegion>
+                      s3_uri = os.environ['S3_METRICS_URI']
+                      bucket, key = s3_uri.replace('s3://', '').split('/', 1)
+                      region = os.environ['AWS_DEFAULT_REGION']
+
+                      data = json.loads(
+                          boto3.client('s3', region_name=region)
+                              .get_object(Bucket=bucket, Key=key)['Body'].read()
+                      )
+
+                      print("Model metrics loaded:")
+                      for k, v in data.items():
+                          if isinstance(v, float):
+                              print(f"  {k}: {v:.4f}")
+
+                      with open('/tmp/metrics_payload.txt', 'w') as f:
+                          f.write(json.dumps(data))
+                      EOF
+
+                      export METRICS_JSON=$(cat /tmp/metrics_payload.txt)
+                      echo "Payload ready for Harness Policy evaluation."
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
                       S3_METRICS_URI: <+stages.Train_Model.spec.execution.steps.Register_in_SageMaker_Model_Registry.output.outputVariables.S3_METRICS_URI>
+                    outputVariables:
+                      - name: METRICS_JSON
+                        value: METRICS_JSON
+                        type: String
+
+              ##################################################################
+              # Step 2 — Enforce Model Governance Policy  [Harness Policy step]
+              # Native Harness OPA evaluation — no external tooling.
+              # The policy set references model_governance.rego imported into
+              # Harness (Settings → Governance → Policies).
+              # Harness evaluates the metrics payload and blocks the pipeline
+              # if any deny rule fires.
+              ##################################################################
+              - step:
+                  type: Policy
+                  name: Enforce Model Governance Policy
+                  identifier: Enforce_Model_Governance_Policy
+                  spec:
+                    policySets:
+                      - <+pipeline.variables.governancePolicySet>
+                    type: Custom
+                    policySpec:
+                      payload: <+steps.Fetch_Model_Metrics.output.outputVariables.METRICS_JSON>
+                  timeout: 10m
 
     ##########################################################################
     # STAGE 3 — Evaluate Model
