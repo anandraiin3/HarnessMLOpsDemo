@@ -1,39 +1,26 @@
 """
-train_model.py — Train RandomForest, track with Amazon SageMaker Experiments,
-                 save artifact to S3, register in SageMaker Model Registry.
+train_model.py — Train RandomForest classifier and save artifacts locally.
 
-AWS Services used:
-  - SageMaker Experiments : experiment tracking (params, metrics, fairness)
-  - S3                    : model artifact and metrics storage
-  - SageMaker Model Registry : model versioning and approval workflow
-
-IAM permissions required on the EKS pod (via IRSA or AWS credentials):
-  s3:PutObject, s3:GetObject
-  sagemaker:CreateExperiment, sagemaker:CreateTrial, sagemaker:CreateTrialComponent
-  sagemaker:CreateModelPackageGroup, sagemaker:CreateModelPackage
+Pure ML step — no AWS dependencies. AWS integrations are handled as
+separate, named steps within the same Harness pipeline stage:
+  Step 2: log_experiment.py    → SageMaker Experiments
+  Step 3: upload_artifacts.py  → S3 artifact storage
+  Step 4: register_model.py    → SageMaker Model Registry
 
 Usage:
-    python harness/train_model.py --n_estimators 100 --model_name credit-card-approval
+    python scripts/train_model.py --n_estimators 100 --model_name credit-card-approval
 """
 
 import argparse
 import json
 import os
 import yaml
-import boto3
 import joblib
 import pandas as pd
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-
-try:
-    import sagemaker
-    from sagemaker.experiments.run import Run as SageMakerRun
-    SAGEMAKER_SDK = True
-except ImportError:
-    SAGEMAKER_SDK = False
 
 
 # ── Metric helpers ─────────────────────────────────────────────────────────────
@@ -86,103 +73,16 @@ def train(X_train, X_test, y_train, y_test, group_test, n_estimators):
     return model, train_metrics, test_metrics, fairness, importances
 
 
-# ── AWS helpers ────────────────────────────────────────────────────────────────
-
-def log_to_sagemaker_experiments(experiment_name, run_name, params, metrics, region):
-    """Log params and metrics to SageMaker Experiments (visible in AWS console)."""
-    if not SAGEMAKER_SDK:
-        print("[SKIP] sagemaker SDK not available — skipping Experiments logging")
-        return
-    try:
-        session = sagemaker.Session(boto3.Session(region_name=region))
-        with SageMakerRun(
-            experiment_name=experiment_name,
-            run_name=run_name,
-            sagemaker_session=session,
-        ) as sm_run:
-            for k, v in params.items():
-                sm_run.log_parameter(k, str(v))
-            for k, v in metrics.items():
-                if isinstance(v, (int, float)):
-                    sm_run.log_metric(k, v)
-        print(f"==> Logged to SageMaker Experiments: {experiment_name}/{run_name}")
-    except Exception as e:
-        print(f"[WARN] SageMaker Experiments logging failed (non-fatal): {e}")
-
-
-def upload_to_s3(local_path, bucket, s3_key, region):
-    s3 = boto3.client('s3', region_name=region)
-    s3.upload_file(local_path, bucket, s3_key)
-    uri = f"s3://{bucket}/{s3_key}"
-    print(f"==> Uploaded to {uri}")
-    return uri
-
-
-def register_in_model_registry(run_name, s3_model_uri, model_package_group,
-                                api_image_uri, region):
-    """
-    Register the model in SageMaker Model Registry as PendingManualApproval.
-    The model will be promoted to Approved after the Harness approval gate passes.
-    """
-    sm = boto3.client('sagemaker', region_name=region)
-
-    # Create model package group (idempotent)
-    try:
-        sm.create_model_package_group(
-            ModelPackageGroupName=model_package_group,
-            ModelPackageGroupDescription="Credit card approval model versions",
-        )
-        print(f"==> Created model package group: {model_package_group}")
-    except Exception:
-        pass  # Group already exists
-
-    response = sm.create_model_package(
-        ModelPackageGroupName=model_package_group,
-        ModelApprovalStatus='PendingManualApproval',
-        ModelPackageDescription=f"Training run: {run_name}",
-        CustomerMetadataProperties={
-            'run_name': run_name,
-            's3_model_uri': s3_model_uri,
-        },
-        InferenceSpecification={
-            'Containers': [
-                {
-                    'Image': api_image_uri,
-                    'ModelDataUrl': s3_model_uri,
-                }
-            ],
-            'SupportedContentTypes': ['application/json'],
-            'SupportedResponseMIMETypes': ['application/json'],
-        },
-    )
-
-    arn = response['ModelPackageArn']
-    print(f"==> Registered in SageMaker Model Registry: {arn}")
-    return arn
-
-
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description='Train RandomForest with AWS tracking.')
+    parser = argparse.ArgumentParser(description='Train RandomForest classifier.')
     parser.add_argument('--n_estimators', type=int, default=100)
     parser.add_argument('--model_name', type=str, default='credit-card-approval')
     args = parser.parse_args()
 
     with open("configs/config.yml") as f:
         config = yaml.safe_load(f)
-
-    bucket              = os.environ.get('S3_BUCKET',
-                            config.get('aws', {}).get('s3_bucket', ''))
-    region              = os.environ.get('AWS_DEFAULT_REGION',
-                            config.get('aws', {}).get('region', 'us-east-1'))
-    model_package_group = os.environ.get('SAGEMAKER_MODEL_PACKAGE_GROUP', args.model_name)
-    api_image_uri       = os.environ.get('API_IMAGE_URI', 'placeholder/credit-card-api:latest')
-    experiment_name     = config.get('sagemaker', {}).get(
-                            'experiment_name', 'credit-card-approval')
-
-    if not bucket:
-        raise ValueError("S3_BUCKET env var or aws.s3_bucket in config.yml is required")
 
     run_name = f"run-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
     print(f"\n==> Starting training run: {run_name}")
@@ -210,48 +110,33 @@ def main():
         **fairness,
     }
     params = {
-        "n_estimators":      args.n_estimators,
-        "n_features":        X.shape[1],
-        "feature_names":     list(X.columns),
+        "n_estimators":        args.n_estimators,
+        "model_name":          args.model_name,
+        "n_features":          X.shape[1],
+        "feature_names":       list(X.columns),
         "feature_importances": importances,
     }
 
-    # ── Log to SageMaker Experiments ───────────────────────────────────────────
-    log_to_sagemaker_experiments(experiment_name, run_name, params, all_metrics, region)
-
-    # ── Save and upload artifacts ──────────────────────────────────────────────
+    # ── Save artifacts locally ─────────────────────────────────────────────────
+    # Shared workspace: subsequent steps in this stage read these files.
+    # S3 upload happens in the next step (upload_artifacts.py).
     os.makedirs("outputs", exist_ok=True)
 
-    metrics_path = "outputs/metrics.json"
-    with open(metrics_path, "w") as f:
+    with open("outputs/metrics.json", "w") as f:
         json.dump(all_metrics, f, indent=2)
+    with open("outputs/params.json", "w") as f:
+        json.dump(params, f, indent=2)
 
-    model_path = "outputs/model.joblib"
-    joblib.dump(model, model_path)
+    joblib.dump(model, "outputs/model.joblib")
 
-    s3_prefix      = f"models/{model_package_group}/{run_name}"
-    s3_metrics_uri = upload_to_s3(metrics_path, bucket, f"{s3_prefix}/metrics.json", region)
-    s3_model_uri   = upload_to_s3(model_path,   bucket, f"{s3_prefix}/model.joblib", region)
-
-    # ── Register in SageMaker Model Registry ──────────────────────────────────
-    model_package_arn = register_in_model_registry(
-        run_name, s3_model_uri, model_package_group, api_image_uri, region
-    )
-
-    # ── Write outputs for downstream Harness pipeline steps ───────────────────
     with open("outputs/run_name.txt", "w") as f:
         f.write(run_name)
-    with open("outputs/model_package_arn.txt", "w") as f:
-        f.write(model_package_arn)
-    with open("outputs/s3_metrics_uri.txt", "w") as f:
-        f.write(s3_metrics_uri)
 
-    print(f"\n==> Run name         : {run_name}")
-    print(f"==> Train accuracy   : {train_metrics['accuracy']:.4f}")
-    print(f"==> Test  accuracy   : {test_metrics['accuracy']:.4f}")
-    print(f"==> Fairness gap     : {fairness['fairness_gap']:.4f}")
-    print(f"==> Model package ARN: {model_package_arn}")
-    print(f"==> Metrics at       : {s3_metrics_uri}")
+    print(f"\n==> Run name       : {run_name}")
+    print(f"==> Train accuracy  : {train_metrics['accuracy']:.4f}")
+    print(f"==> Test  accuracy  : {test_metrics['accuracy']:.4f}")
+    print(f"==> Fairness gap    : {fairness['fairness_gap']:.4f}")
+    print(f"\nArtifacts saved to outputs/ — next step: Log to SageMaker Experiments")
 
 
 if __name__ == "__main__":
