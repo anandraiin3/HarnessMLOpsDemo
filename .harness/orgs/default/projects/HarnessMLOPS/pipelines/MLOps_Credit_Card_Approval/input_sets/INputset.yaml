@@ -1,0 +1,112 @@
+inputSet:
+  pipeline:
+    identifier: MLOps_Credit_Card_Approval
+    properties:
+      ci:
+        codebase:
+          build:
+            spec:
+              branch: main
+            type: branch
+    variables:
+      - name: s3BucketName
+        type: String
+        value: anand-mlops-demo
+      - name: inferenceImageUri
+        type: String
+        value: credit-card-api
+      - name: governancePolicySet
+        type: String
+        value: gfgfgfg
+    stages:
+      - stage:
+          identifier: Train_Model
+          type: CI
+          spec:
+            infrastructure:
+              type: KubernetesDirect
+              spec:
+                connectorRef: MlopsK8S
+            execution:
+              steps:
+                - step:
+                    identifier: Upload_Model_Artifact_to_S3
+                    type: S3Upload
+                    spec:
+                      connectorRef: ANANDTRACEABLEAWSKEY
+                - step:
+                    identifier: Upload_Model_Metrics_to_S3
+                    type: S3Upload
+                    spec:
+                      connectorRef: ANANDTRACEABLEAWSKEY
+      - stage:
+          identifier: Governance_Policy_Check
+          type: CI
+          spec:
+            infrastructure:
+              type: KubernetesDirect
+              spec:
+                connectorRef: MlopsK8S
+      - stage:
+          identifier: Evaluate_Model
+          type: CI
+          spec:
+            infrastructure:
+              type: KubernetesDirect
+              spec:
+                connectorRef: MlopsK8S
+      - stage:
+          identifier: Deploy_Staging
+          type: Deployment
+          spec:
+            services:
+              values:
+                - serviceInputs:
+                    serviceDefinition:
+                      type: Kubernetes
+                      spec:
+                        artifacts:
+                          primary:
+                            primaryArtifactRef: creditcardapp
+                  serviceRef: CreditCardApp
+                - serviceInputs:
+                    serviceDefinition:
+                      type: Kubernetes
+                      spec:
+                        artifacts:
+                          primary:
+                            primaryArtifactRef: creditcardapi
+                  serviceRef: CreditCardApi
+      - stage:
+          identifier: Integration_Tests
+          type: CI
+          spec:
+            infrastructure:
+              type: KubernetesDirect
+              spec:
+                connectorRef: MlopsK8S
+      - stage:
+          identifier: Approve_Model_in_Registry
+          type: CI
+          spec:
+            infrastructure:
+              type: KubernetesDirect
+              spec:
+                connectorRef: MlopsK8S
+      - stage:
+          identifier: Deploy_Production
+          type: Deployment
+          spec:
+            service:
+              serviceRef: CreditCardApp
+              serviceInputs:
+                serviceDefinition:
+                  type: Kubernetes
+                  spec:
+                    artifacts:
+                      primary:
+                        primaryArtifactRef: creditcardapp
+  name: INputset
+  identifier: INputset
+  orgIdentifier: default
+  projectIdentifier: HarnessMLOPS
