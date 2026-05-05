@@ -103,6 +103,18 @@ You will be prompted for these when running the pipeline:
 
 ---
 
+## AWS IAM / IRSA Setup
+
+Pipeline stages that call AWS (SageMaker Experiments, SageMaker Model Registry, S3) authenticate via **IRSA — IAM Roles for Service Accounts**. No static credentials are stored anywhere in the pipeline.
+
+See **[docs/irsa-setup.md](docs/irsa-setup.md)** for the complete setup walkthrough:
+- IAM policies for SageMaker and S3
+- IAM role trust policy scoped to the `helm-delegate-mlops` service account
+- `kubectl` commands to annotate the service account and restart the delegate
+- Harness connector configuration for native S3Upload steps
+
+---
+
 ## AWS EKS Kubernetes Manifests
 
 Located in `web_application/k8s/`:

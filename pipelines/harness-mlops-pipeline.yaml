@@ -155,9 +155,15 @@ pipeline:
                         value: S3_METRICS_URI
         delegateSelectors:
           - helm-delegate-mlops
+    ##########################################################################
+    # STAGE 2a — Fetch Governance Metrics
+    # Downloads metrics.json from S3 and exports it as METRICS_JSON for
+    # the Policy step. Split from the Policy step because the Policy step
+    # type is not valid inside a CI stage (causes CIAbstractStepNode NPE).
+    ##########################################################################
     - stage:
-        name: Governance Policy Check
-        identifier: Governance_Policy_Check
+        name: Fetch Governance Metrics
+        identifier: Fetch_Governance_Metrics
         type: CI
         spec:
           cloneCodebase: false
@@ -212,6 +218,22 @@ pipeline:
                       - name: METRICS_JSON
                         value: METRICS_JSON
                         type: String
+        delegateSelectors:
+          - helm-delegate-mlops
+
+    ##########################################################################
+    # STAGE 2b — Enforce Governance Policy
+    # Passes the metrics payload to the Harness OPA engine. Runs as a Custom
+    # stage so the Policy step (a platform-level step) is valid here.
+    # No infrastructure needed — evaluated entirely by the Harness platform.
+    ##########################################################################
+    - stage:
+        name: Enforce Governance Policy
+        identifier: Enforce_Governance_Policy
+        type: Custom
+        spec:
+          execution:
+            steps:
               - step:
                   type: Policy
                   name: Enforce Model Governance Policy
@@ -221,10 +243,8 @@ pipeline:
                       - policy_set_pipeline_approval_05_05_15_35
                     type: Custom
                     policySpec:
-                      payload: <+steps.Fetch_Model_Metrics.output.outputVariables.METRICS_JSON>
+                      payload: <+stages.Fetch_Governance_Metrics.spec.execution.steps.Fetch_Model_Metrics.output.outputVariables.METRICS_JSON>
                   timeout: 10m
-        delegateSelectors:
-          - helm-delegate-mlops
     - stage:
         name: Evaluate Model
         identifier: Evaluate_Model
