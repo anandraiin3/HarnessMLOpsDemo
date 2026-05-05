@@ -101,12 +101,16 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet boto3 sagemaker
+                      pip install --quiet --root-user-action=ignore boto3 sagemaker
                       python scripts/log_experiment.py \
                         --experiment_name <+pipeline.variables.sagemakerExperimentName> \
                         --region <+pipeline.variables.awsRegion>
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                    resources:
+                      limits:
+                        memory: 2Gi
+                        cpu: "1"
               - step:
                   type: S3Upload
                   name: Upload Model Artifact to S3
@@ -136,7 +140,7 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet boto3
+                      pip install --quiet --root-user-action=ignore boto3
                       S3_PREFIX="s3://<+pipeline.variables.s3BucketName>/models/<+pipeline.variables.modelPackageGroup>/<+steps.Train_RF_Model.output.outputVariables.RUN_NAME>"
                       export S3_MODEL_URI="${S3_PREFIX}/model.joblib"
                       export S3_METRICS_URI="${S3_PREFIX}/metrics.json"
@@ -150,6 +154,10 @@ pipeline:
                       echo "S3_METRICS_URI=$S3_METRICS_URI"
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                    resources:
+                      limits:
+                        memory: 1Gi
+                        cpu: "1"
                     outputVariables:
                       - name: MODEL_PACKAGE_ARN
                         type: String
@@ -190,7 +198,7 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet boto3
+                      pip install --quiet --root-user-action=ignore boto3
 
                       python - <<'EOF'
                       import boto3, json, os
@@ -218,6 +226,10 @@ pipeline:
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
                       S3_METRICS_URI: <+stages.Train_Model.spec.execution.steps.Register_in_SageMaker_Model_Registry.output.outputVariables.S3_METRICS_URI>
+                    resources:
+                      limits:
+                        memory: 1Gi
+                        cpu: "1"
                     outputVariables:
                       - name: METRICS_JSON
                         value: METRICS_JSON
@@ -272,12 +284,16 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet boto3
+                      pip install --quiet --root-user-action=ignore boto3
                       python scripts/evaluate_model.py \
                         --s3_metrics_uri <+stages.Train_Model.spec.execution.steps.Register_in_SageMaker_Model_Registry.output.outputVariables.S3_METRICS_URI> \
                         --region <+pipeline.variables.awsRegion>
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                    resources:
+                      limits:
+                        memory: 1Gi
+                        cpu: "1"
         delegateSelectors:
           - helm-delegate-mlops
     - stage:
@@ -499,12 +515,16 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet boto3
+                      pip install --quiet --root-user-action=ignore boto3
                       python scripts/promote_model.py \
                         --model_package_arn <+stages.Train_Model.spec.execution.steps.Register_in_SageMaker_Model_Registry.output.outputVariables.MODEL_PACKAGE_ARN> \
                         --region <+pipeline.variables.awsRegion>
                     envVariables:
                       AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                    resources:
+                      limits:
+                        memory: 1Gi
+                        cpu: "1"
     - stage:
         name: Deploy Production
         identifier: Deploy_Production
