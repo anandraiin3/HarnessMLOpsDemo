@@ -78,12 +78,16 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet -r requirements.txt
+                      pip install --quiet --root-user-action=ignore -r requirements.txt
                       python scripts/train_model.py \
                         --n_estimators 100 \
                         --model_name <+pipeline.variables.modelPackageGroup>
                       export RUN_NAME=$(cat outputs/run_name.txt)
                       echo "RUN_NAME=$RUN_NAME"
+                    resources:
+                      limits:
+                        memory: 2Gi
+                        cpu: "1"
                     outputVariables:
                       - name: RUN_NAME
                         type: String

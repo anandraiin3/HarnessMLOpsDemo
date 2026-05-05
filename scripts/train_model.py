@@ -17,7 +17,7 @@ import os
 import yaml
 import joblib
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -84,7 +84,7 @@ def main():
     with open("configs/config.yml") as f:
         config = yaml.safe_load(f)
 
-    run_name = f"run-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+    run_name = f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     print(f"\n==> Starting training run: {run_name}")
 
     # ── Load data ──────────────────────────────────────────────────────────────
