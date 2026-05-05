@@ -101,7 +101,7 @@ pipeline:
                     image: python:3.12-slim
                     shell: Sh
                     command: |-
-                      pip install --quiet --root-user-action=ignore boto3 sagemaker
+                      pip install --quiet --root-user-action=ignore boto3
                       python scripts/log_experiment.py \
                         --experiment_name <+pipeline.variables.sagemakerExperimentName> \
                         --region <+pipeline.variables.awsRegion>
