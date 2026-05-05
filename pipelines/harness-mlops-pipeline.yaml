@@ -166,6 +166,8 @@ pipeline:
             spec:
               connectorRef: <+input>
               namespace: mlops
+              automountServiceAccountToken: true
+              nodeSelector: {}
               os: Linux
           execution:
             steps:
@@ -216,7 +218,7 @@ pipeline:
                   identifier: Enforce_Model_Governance_Policy
                   spec:
                     policySets:
-                      - <+pipeline.variables.governancePolicySet>
+                      - policy_set_pipeline_approval_05_05_15_35
                     type: Custom
                     policySpec:
                       payload: <+steps.Fetch_Model_Metrics.output.outputVariables.METRICS_JSON>
