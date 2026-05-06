@@ -63,8 +63,8 @@ pipeline:
             type: KubernetesDirect
             spec:
               connectorRef: <+input>
-              namespace: mlops
-              serviceAccountName: harness-mlops-build
+              namespace: harness-delegate-ng
+              serviceAccountName: helm-delegate-mlops
               automountServiceAccountToken: true
               nodeSelector: {}
               os: Linux
@@ -168,12 +168,6 @@ pipeline:
                         value: S3_METRICS_URI
         delegateSelectors:
           - helm-delegate-mlops
-    ##########################################################################
-    # STAGE 2a — Fetch Governance Metrics
-    # Downloads metrics.json from S3 and exports it as METRICS_JSON for
-    # the Policy step. Split from the Policy step because the Policy step
-    # type is not valid inside a CI stage (causes CIAbstractStepNode NPE).
-    ##########################################################################
     - stage:
         name: Fetch Governance Metrics
         identifier: Fetch_Governance_Metrics
@@ -185,7 +179,6 @@ pipeline:
             spec:
               connectorRef: <+input>
               namespace: mlops
-              serviceAccountName: harness-mlops-build
               automountServiceAccountToken: true
               nodeSelector: {}
               os: Linux
@@ -238,13 +231,6 @@ pipeline:
                         type: String
         delegateSelectors:
           - helm-delegate-mlops
-
-    ##########################################################################
-    # STAGE 2b — Enforce Governance Policy
-    # Passes the metrics payload to the Harness OPA engine. Runs as a Custom
-    # stage so the Policy step (a platform-level step) is valid here.
-    # No infrastructure needed — evaluated entirely by the Harness platform.
-    ##########################################################################
     - stage:
         name: Enforce Governance Policy
         identifier: Enforce_Governance_Policy
