@@ -20,6 +20,7 @@ Usage:
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
@@ -87,18 +88,21 @@ def main():
         TrialComponentName=component_name,
     )
 
-    # Log parameters and metric summaries
+    # Log parameters via UpdateTrialComponent (Metrics is not a valid param here)
     sm.update_trial_component(
         TrialComponentName=component_name,
         Parameters={k: {'StringValue': str(v)} for k, v in params.items()},
-        Metrics=[
+    )
+
+    # Log metrics via BatchPutMetrics (separate sagemaker-metrics client)
+    sm_metrics = boto3.client('sagemaker-metrics', region_name=args.region)
+    sm_metrics.batch_put_metrics(
+        TrialComponentName=component_name,
+        MetricData=[
             {
                 'MetricName': k,
-                'Min': float(v),
-                'Max': float(v),
-                'Last': float(v),
-                'Avg': float(v),
-                'Count': 1,
+                'Timestamp': datetime.now(timezone.utc),
+                'Value': float(v),
             }
             for k, v in metrics.items()
             if isinstance(v, (int, float))
