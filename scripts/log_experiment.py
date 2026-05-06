@@ -29,7 +29,10 @@ def create_if_not_exists(fn, **kwargs):
     try:
         fn(**kwargs)
     except ClientError as e:
-        if e.response['Error']['Code'] not in ('ValidationException', 'ResourceInUse'):
+        code = e.response['Error']['Code']
+        msg = e.response['Error']['Message']
+        if code not in ('ValidationException', 'ResourceInUse'):
+            print(f"\n  [ERROR] AWS error: {code} — {msg}")
             raise
 
 
