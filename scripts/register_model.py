@@ -31,9 +31,11 @@ not buried as defaults inside the script.
 
 import argparse
 import os
+import re
 import sys
 
 import boto3
+from botocore.exceptions import ClientError
 
 
 def main():
@@ -49,6 +51,17 @@ def main():
     parser.add_argument('--region', type=str, required=True,
                         help='AWS region (Harness pipeline variable)')
     args = parser.parse_args()
+
+    _ECR_RE = re.compile(r'^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/.+:.+$')
+    if not _ECR_RE.match(args.inference_image_uri):
+        print(
+            f"\n  [ERROR] --inference_image_uri must be a private ECR image URI.\n"
+            f"  Got    : {args.inference_image_uri}\n"
+            f"  Expect : 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/credit-card-api:tag\n"
+            f"  Note   : public.ecr.aws and Docker Hub images are NOT accepted by SageMaker.\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     region = args.region
 
@@ -71,8 +84,9 @@ def main():
             ModelPackageGroupDescription="Credit card approval model versions",
         )
         print(f"  Created model package group: {args.model_package_group}")
-    except sm.exceptions.ClientError:
-        pass  # Group already exists
+    except ClientError as e:
+        if e.response['Error']['Code'] not in ('ResourceInUse', 'ConflictException'):
+            raise
 
     response = sm.create_model_package(
         ModelPackageGroupName=args.model_package_group,

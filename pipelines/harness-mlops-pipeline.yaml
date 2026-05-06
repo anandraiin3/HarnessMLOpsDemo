@@ -51,7 +51,11 @@ pipeline:
     - name: inferenceImageUri
       type: String
       value: <+input>
-      description: ECR image URI used by SageMaker Model Registry InferenceSpecification
+      description: "Private ECR image URI for SageMaker Model Registry InferenceSpecification (format: <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>)"
+    - name: sagemakerRegion
+      type: String
+      value: ap-southeast-2
+      description: AWS region where SageMaker Model Registry is hosted
     - name: governancePolicySet
       type: String
       value: <+input>
@@ -185,12 +189,12 @@ pipeline:
                         --s3_model_uri $S3_MODEL_URI \
                         --model_package_group <+pipeline.variables.modelPackageGroup> \
                         --inference_image_uri <+pipeline.variables.inferenceImageUri> \
-                        --region <+pipeline.variables.awsRegion>
+                        --region <+pipeline.variables.sagemakerRegion>
                       export MODEL_PACKAGE_ARN=$(cat outputs/model_package_arn.txt)
                       echo "MODEL_PACKAGE_ARN=$MODEL_PACKAGE_ARN"
                       echo "S3_METRICS_URI=$S3_METRICS_URI"
                     envVariables:
-                      AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                      AWS_DEFAULT_REGION: <+pipeline.variables.sagemakerRegion>
                     resources:
                       limits:
                         memory: 1Gi
@@ -552,9 +556,9 @@ pipeline:
                       pip install --quiet --root-user-action=ignore boto3
                       python scripts/promote_model.py \
                         --model_package_arn <+stages.Train_Model.spec.execution.steps.Register_in_SageMaker_Model_Registry.output.outputVariables.MODEL_PACKAGE_ARN> \
-                        --region <+pipeline.variables.awsRegion>
+                        --region <+pipeline.variables.sagemakerRegion>
                     envVariables:
-                      AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                      AWS_DEFAULT_REGION: <+pipeline.variables.sagemakerRegion>
                     resources:
                       limits:
                         memory: 1Gi
