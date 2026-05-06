@@ -51,7 +51,7 @@ pipeline:
     - name: inferenceImageUri
       type: String
       description: "Private ECR image URI for SageMaker Model Registry InferenceSpecification (format: <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>)"
-      value: 282764120287.dkr.ecr.ap-southeast-2.amazonaws.com/anand/mlops-demo-creditcard:<+pipeline.sequenceId>
+      value: <+input>
     - name: sagemakerRegion
       type: String
       description: AWS region where SageMaker Model Registry is hosted
