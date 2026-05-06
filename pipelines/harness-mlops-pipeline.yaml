@@ -40,6 +40,10 @@ pipeline:
       type: String
       value: credit-card-app
       description: Next.js frontend image name
+    - name: s3Region
+      type: String
+      value: ap-southeast-2
+      description: AWS region where the S3 bucket is located (may differ from awsRegion)
     - name: sagemakerExperimentName
       type: String
       value: credit-card-approval
@@ -113,25 +117,57 @@ pipeline:
                         memory: 2Gi
                         cpu: "1"
               - step:
-                  type: S3Upload
+                  type: Run
                   name: Upload Model Artifact to S3
                   identifier: Upload_Model_Artifact_to_S3
                   spec:
-                    connectorRef: <+input>
-                    region: <+pipeline.variables.awsRegion>
-                    bucket: <+pipeline.variables.s3BucketName>
-                    sourcePath: outputs/model.joblib
-                    target: models/<+pipeline.variables.modelPackageGroup>/<+steps.Train_RF_Model.output.outputVariables.RUN_NAME>/model.joblib
+                    connectorRef: account.harnessImage
+                    image: python:3.12-slim
+                    shell: Sh
+                    command: |-
+                      pip install --quiet --root-user-action=ignore boto3
+                      python - <<'EOF'
+                      import boto3, os
+                      s3 = boto3.client('s3', region_name=os.environ['S3_REGION'])
+                      key = f"models/{os.environ['MODEL_GROUP']}/{os.environ['RUN_NAME']}/model.joblib"
+                      s3.upload_file('outputs/model.joblib', os.environ['S3_BUCKET'], key)
+                      print(f"Uploaded model to s3://{os.environ['S3_BUCKET']}/{key}")
+                      EOF
+                    envVariables:
+                      S3_BUCKET: <+pipeline.variables.s3BucketName>
+                      S3_REGION: <+pipeline.variables.s3Region>
+                      MODEL_GROUP: <+pipeline.variables.modelPackageGroup>
+                      RUN_NAME: <+steps.Train_RF_Model.output.outputVariables.RUN_NAME>
+                    resources:
+                      limits:
+                        memory: 1Gi
+                        cpu: "1"
               - step:
-                  type: S3Upload
+                  type: Run
                   name: Upload Model Metrics to S3
                   identifier: Upload_Model_Metrics_to_S3
                   spec:
-                    connectorRef: <+input>
-                    region: <+pipeline.variables.awsRegion>
-                    bucket: <+pipeline.variables.s3BucketName>
-                    sourcePath: outputs/metrics.json
-                    target: models/<+pipeline.variables.modelPackageGroup>/<+steps.Train_RF_Model.output.outputVariables.RUN_NAME>/metrics.json
+                    connectorRef: account.harnessImage
+                    image: python:3.12-slim
+                    shell: Sh
+                    command: |-
+                      pip install --quiet --root-user-action=ignore boto3
+                      python - <<'EOF'
+                      import boto3, os
+                      s3 = boto3.client('s3', region_name=os.environ['S3_REGION'])
+                      key = f"models/{os.environ['MODEL_GROUP']}/{os.environ['RUN_NAME']}/metrics.json"
+                      s3.upload_file('outputs/metrics.json', os.environ['S3_BUCKET'], key)
+                      print(f"Uploaded metrics to s3://{os.environ['S3_BUCKET']}/{key}")
+                      EOF
+                    envVariables:
+                      S3_BUCKET: <+pipeline.variables.s3BucketName>
+                      S3_REGION: <+pipeline.variables.s3Region>
+                      MODEL_GROUP: <+pipeline.variables.modelPackageGroup>
+                      RUN_NAME: <+steps.Train_RF_Model.output.outputVariables.RUN_NAME>
+                    resources:
+                      limits:
+                        memory: 1Gi
+                        cpu: "1"
               - step:
                   type: Run
                   name: Register in SageMaker Model Registry
@@ -220,7 +256,7 @@ pipeline:
                       export METRICS_JSON=$(cat /tmp/metrics_payload.txt)
                       echo "Payload ready for Harness Policy evaluation."
                     envVariables:
-                      AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                      AWS_DEFAULT_REGION: <+pipeline.variables.s3Region>
                       S3_METRICS_URI: <+stages.Train_Model.spec.execution.steps.Register_in_SageMaker_Model_Registry.output.outputVariables.S3_METRICS_URI>
                     resources:
                       limits:
@@ -285,9 +321,9 @@ pipeline:
                       pip install --quiet --root-user-action=ignore boto3
                       python scripts/evaluate_model.py \
                         --s3_metrics_uri <+stages.Train_Model.spec.execution.steps.Register_in_SageMaker_Model_Registry.output.outputVariables.S3_METRICS_URI> \
-                        --region <+pipeline.variables.awsRegion>
+                        --region <+pipeline.variables.s3Region>
                     envVariables:
-                      AWS_DEFAULT_REGION: <+pipeline.variables.awsRegion>
+                      AWS_DEFAULT_REGION: <+pipeline.variables.s3Region>
                     resources:
                       limits:
                         memory: 1Gi
