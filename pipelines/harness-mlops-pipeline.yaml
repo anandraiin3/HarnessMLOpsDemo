@@ -64,6 +64,7 @@ pipeline:
             spec:
               connectorRef: <+input>
               namespace: mlops
+              serviceAccountName: harness-mlops-build
               automountServiceAccountToken: true
               nodeSelector: {}
               os: Linux
@@ -184,6 +185,7 @@ pipeline:
             spec:
               connectorRef: <+input>
               namespace: mlops
+              serviceAccountName: harness-mlops-build
               automountServiceAccountToken: true
               nodeSelector: {}
               os: Linux
