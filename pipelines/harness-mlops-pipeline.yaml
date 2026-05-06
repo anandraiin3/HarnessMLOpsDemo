@@ -178,7 +178,8 @@ pipeline:
             type: KubernetesDirect
             spec:
               connectorRef: <+input>
-              namespace: mlops
+              namespace: harness-delegate-ng
+              serviceAccountName: helm-delegate-mlops
               automountServiceAccountToken: true
               nodeSelector: {}
               os: Linux
@@ -231,6 +232,7 @@ pipeline:
                         type: String
         delegateSelectors:
           - helm-delegate-mlops
+        description: ""
     - stage:
         name: Enforce Governance Policy
         identifier: Enforce_Governance_Policy
@@ -249,6 +251,11 @@ pipeline:
                     policySpec:
                       payload: <+stages.Fetch_Governance_Metrics.spec.execution.steps.Fetch_Model_Metrics.output.outputVariables.METRICS_JSON>
                   timeout: 10m
+          environment:
+            environmentRef: production
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: prodns
     - stage:
         name: Evaluate Model
         identifier: Evaluate_Model
@@ -259,7 +266,10 @@ pipeline:
             type: KubernetesDirect
             spec:
               connectorRef: <+input>
-              namespace: mlops
+              namespace: harness-delegate-ng
+              serviceAccountName: helm-delegate-mlops
+              automountServiceAccountToken: true
+              nodeSelector: {}
               os: Linux
           execution:
             steps:
