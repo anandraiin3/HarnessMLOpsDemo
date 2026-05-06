@@ -18,48 +18,48 @@ pipeline:
   variables:
     - name: imageTag
       type: String
-      value: <+pipeline.sequenceId>
       description: Docker image tag for this pipeline run
+      value: <+pipeline.sequenceId>
     - name: awsRegion
       type: String
-      value: us-east-1
       description: AWS region for SageMaker and S3
+      value: us-east-1
     - name: s3BucketName
       type: String
-      value: <+input>
       description: S3 bucket for model artifacts and metrics
+      value: <+input>
     - name: modelPackageGroup
       type: String
-      value: credit-card-approval
       description: SageMaker Model Registry package group name
+      value: credit-card-approval
     - name: apiImageName
       type: String
-      value: credit-card-api
       description: Flask prediction API image name
+      value: credit-card-api
     - name: appImageName
       type: String
-      value: credit-card-app
       description: Next.js frontend image name
+      value: credit-card-app
     - name: s3Region
       type: String
-      value: ap-southeast-2
       description: AWS region where the S3 bucket is located (may differ from awsRegion)
+      value: ap-southeast-2
     - name: sagemakerExperimentName
       type: String
-      value: credit-card-approval
       description: SageMaker Experiments name for tracking training runs
+      value: credit-card-approval
     - name: inferenceImageUri
       type: String
-      value: <+input>
       description: "Private ECR image URI for SageMaker Model Registry InferenceSpecification (format: <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>)"
+      value: 282764120287.dkr.ecr.ap-southeast-2.amazonaws.com/anand/mlops-demo-creditcard:<+pipeline.sequenceId>
     - name: sagemakerRegion
       type: String
-      value: ap-southeast-2
       description: AWS region where SageMaker Model Registry is hosted
+      value: ap-southeast-2
     - name: governancePolicySet
       type: String
-      value: <+input>
       description: Harness Policy Set identifier containing model_governance.rego (Settings → Governance → Policy Sets)
+      value: <+input>
   stages:
     - stage:
         name: Train Model
