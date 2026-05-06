@@ -1,4 +1,9 @@
 inputSet:
+  name: inputset3
+  tags: {}
+  identifier: inputset3
+  orgIdentifier: default
+  projectIdentifier: HarnessMLOPS
   pipeline:
     identifier: MLOps_Credit_Card_Approval
     properties:
@@ -14,7 +19,7 @@ inputSet:
         value: anand-mlops-demo
       - name: inferenceImageUri
         type: String
-        value: 282764120287.dkr.ecr.ap-southeast-2.amazonaws.com/anand/mlops-demo-creditcard:<+pipeline.sequenceId>
+        value: 282764120287.dkr.ecr.ap-southeast-2.amazonaws.com/anand/mlops-demo-creditcard:latest
       - name: governancePolicySet
         type: String
         value: policy_set_pipeline_approval_05_05_15_35
@@ -56,7 +61,7 @@ inputSet:
                         artifacts:
                           primary:
                             primaryArtifactRef: creditcardapp
-                            sources: ""
+                            sources: <+input>
                   serviceRef: CreditCardApp
                 - serviceInputs:
                     serviceDefinition:
@@ -65,7 +70,7 @@ inputSet:
                         artifacts:
                           primary:
                             primaryArtifactRef: creditcardapi
-                            sources: ""
+                            sources: <+input>
                   serviceRef: CreditCardApi
       - stage:
           identifier: Integration_Tests
@@ -96,8 +101,4 @@ inputSet:
                     artifacts:
                       primary:
                         primaryArtifactRef: creditcardapp
-                        sources: ""
-  name: inputset3
-  identifier: inputset3
-  orgIdentifier: default
-  projectIdentifier: HarnessMLOPS
+                        sources: <+input>
